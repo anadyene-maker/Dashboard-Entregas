@@ -3,7 +3,10 @@ import pandas as pd
 import requests
 import base64
 import io
+import tempfile
+import os
 from datetime import datetime
+from fpdf import FPDF
 
 # Configuração da página
 st.set_page_config(page_title="Dashboard de Entregas - Gerencial", layout="wide", page_icon="📊")
@@ -11,11 +14,6 @@ st.set_page_config(page_title="Dashboard de Entregas - Gerencial", layout="wide"
 st.markdown("""
     <style>
     .st-emotion-cache-1jicfl2 {padding-top: 1rem;}
-    @media print {
-        header {visibility: hidden;}
-        .st-emotion-cache-1r6slb0 {visibility: hidden;}
-        .sidebar {display: none;}
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -51,6 +49,72 @@ def carregar_dados_github():
     except:
         return pd.DataFrame(), None
 
+# --- FUNÇÃO GERADORA DE PDF ---
+def gerar_arquivo_pdf(df_print, valor_total, total_notas):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    
+    # Título
+    pdf.set_font("helvetica", "B", 14)
+    pdf.cell(0, 10, "Relatorio Executivo de Pendencias Logisticas", align="C", ln=True)
+    pdf.ln(5)
+    
+    # Resumo
+    pdf.set_font("helvetica", "", 10)
+    pdf.cell(0, 6, f"Gerado em: {datetime.now().strftime('%d/%m/%Y as %H:%M')}", ln=True)
+    pdf.cell(0, 6, f"Valor total em transito/atraso: R$ {valor_total:,.2f}", ln=True)
+    pdf.cell(0, 6, f"Total de notas pendentes: {total_notas}", ln=True)
+    pdf.ln(8)
+    
+    # Subtítulo da Tabela
+    pdf.set_font("helvetica", "B", 11)
+    pdf.cell(0, 8, "Cargas Criticas (Atrasadas ou com Gargalo)", ln=True)
+    
+    if df_print.empty:
+        pdf.set_font("helvetica", "", 10)
+        pdf.cell(0, 10, "Nenhuma carga critica no momento. Tudo no prazo!", ln=True)
+    else:
+        # Cabeçalhos da Tabela
+        pdf.set_font("helvetica", "B", 8)
+        colunas = ['N. Nota', 'UF', 'Transportadora', 'Faturamento', 'Agendamento', 'Demora', 'Status']
+        larguras = [15, 8, 65, 22, 25, 25, 25] # Largura total = 185mm (cabe perfeitamente no A4)
+        
+        for i in range(len(colunas)):
+            pdf.cell(larguras[i], 8, colunas[i], border=1, align="C")
+        pdf.ln()
+        
+        # Linhas da Tabela
+        pdf.set_font("helvetica", "", 7)
+        for _, row in df_print.iterrows():
+            # Tratamento de texto para o PDF não quebrar
+            nota = str(row.get('Nº Nota', '')).encode('latin-1', 'ignore').decode('latin-1')
+            uf = str(row.get('U.F', '')).encode('latin-1', 'ignore').decode('latin-1')
+            transp = str(row.get('Logística Ent.', ''))[:35].encode('latin-1', 'ignore').decode('latin-1')
+            fat = str(row.get('Faturamento', '')).encode('latin-1', 'ignore').decode('latin-1')
+            agend = str(row.get('Data Agendamento', '')).encode('latin-1', 'ignore').decode('latin-1')
+            demora = str(row.get('Tempo até Agendar', '')).encode('latin-1', 'ignore').decode('latin-1')
+            
+            # Removemos a "bolinha colorida" pro PDF ficar corporativo
+            status_limpo = str(row.get('Status', '')).replace('🔴', '').replace('🟡', '').strip()
+            
+            pdf.cell(larguras[0], 6, nota, border=1, align="C")
+            pdf.cell(larguras[1], 6, uf, border=1, align="C")
+            pdf.cell(larguras[2], 6, transp, border=1)
+            pdf.cell(larguras[3], 6, fat, border=1, align="C")
+            pdf.cell(larguras[4], 6, agend, border=1, align="C")
+            pdf.cell(larguras[5], 6, demora, border=1, align="C")
+            pdf.cell(larguras[6], 6, status_limpo, border=1, align="C")
+            pdf.ln()
+            
+    # Salva o arquivo em memória para download
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        pdf.output(tmp.name)
+        with open(tmp.name, "rb") as f:
+            pdf_bytes = f.read()
+    os.remove(tmp.name)
+    return pdf_bytes
+# --------------------------------
+
 df_banco, current_sha = carregar_dados_github()
 
 # 🔐 CONTROLE DE ACESSO
@@ -62,7 +126,6 @@ if is_admin:
     st.sidebar.success("🔓 Acesso Liberado")
     with st.sidebar.expander("📥 Subir Planilhas Diárias", expanded=True):
         uploaded_files = st.file_uploader("Arraste os relatórios do Sankhya", type=["xlsx", "csv"], accept_multiple_files=True)
-        
         if uploaded_files:
             if st.button("💾 Unir e Substituir Dados"):
                 if not GITHUB_TOKEN:
@@ -77,7 +140,6 @@ if is_admin:
                             
                             df_novo = pd.concat(dfs, ignore_index=True)
                             resposta_github = salvar_dados_github(df_novo, current_sha)
-                            
                             if resposta_github.status_code in [200, 201]:
                                 st.success(f"✅ {len(uploaded_files)} planilhas unidas e salvas com sucesso!")
                                 st.rerun()
@@ -92,28 +154,21 @@ elif senha_input != "":
 if df_banco is not None and not df_banco.empty:
     df = df_banco.copy()
     
-    # Tratamento de Valores e Datas
     if 'Vlr. Nota' in df.columns:
         df['Vlr. Nota'] = pd.to_numeric(df['Vlr. Nota'].str.replace(',', '.'), errors='coerce').fillna(0)
-    
     if 'Faturamento' in df.columns:
         df['Faturamento'] = pd.to_datetime(df['Faturamento'], errors='coerce')
-    
     if 'Data Agendamento' not in df.columns: 
         df['Data Agendamento'] = pd.NaT
     df['Data Agendamento'] = pd.to_datetime(df['Data Agendamento'], errors='coerce')
     
     hoje = pd.to_datetime(datetime.now().date())
     df['Dias Faturado'] = (hoje - df['Faturamento']).dt.days
-    
-    # MUDEI O NOME AQUI:
     df['Tempo até Agendar'] = (df['Data Agendamento'] - df['Faturamento']).dt.days
 
-    # NOVA REGRA DE STATUS INTELIGENTE
     def classificar_status(row):
         agendamento = row.get('Data Agendamento')
         dias_fat = row.get('Dias Faturado', 0)
-
         if pd.notna(agendamento): 
             if hoje > agendamento: return '🔴 Atrasado' 
             else: return '🟡 Em Trânsito'
@@ -123,14 +178,12 @@ if df_banco is not None and not df_banco.empty:
             
     df['Status'] = df.apply(classificar_status, axis=1)
 
-    # Preencher vazios
     if 'Logística Ent.' not in df.columns: df['Logística Ent.'] = 'Não Informado'
     if 'U.F' not in df.columns: df['U.F'] = 'Não Informado'
     df['Logística Ent.'] = df['Logística Ent.'].fillna("Não Informado")
     df['U.F'] = df['U.F'].fillna("Não Informado")
 
-    # AS DUAS ABAS VISUAIS
-    aba1, aba2 = st.tabs(["📊 Dashboard Interativo", "🖨️ Relatório para Impressão"])
+    aba1, aba2 = st.tabs(["📊 Dashboard Interativo", "🖨️ Relatório em PDF"])
 
     with aba1:
         st.markdown("### 🔍 Filtros de Análise")
@@ -158,7 +211,6 @@ if df_banco is not None and not df_banco.empty:
         st.markdown("---")
         st.subheader("📋 Painel Detalhado de Cargas")
         
-        # NOME NOVO INSERIDO NAS COLUNAS VISÍVEIS
         colunas_visiveis = ['Status', 'Dias Faturado', 'Nº Nota', 'Cliente', 'U.F', 'Vlr. Nota', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Tempo até Agendar']
         colunas_reais = [c for c in colunas_visiveis if c in df_filtrado.columns]
         
@@ -179,39 +231,46 @@ if df_banco is not None and not df_banco.empty:
 
     with aba2:
         st.markdown("## 🖨️ Relatório Executivo de Pendências Logísticas")
-        st.caption(f"Relatório gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}")
+        st.caption(f"Os dados abaixo estão focados apenas nas cargas em atraso ou com gargalo no agendamento.")
         
-        st.markdown(f"""
-        **Resumo Operacional:**
-        * **Valor total de mercadoria em trânsito/atraso:** R$ {valor_total:,.2f}
-        * **Total de notas aguardando finalização:** {total_notas}
-        """)
-        
-        st.markdown("### ⚠️ Cargas Críticas (Atrasadas ou com Agendamento Distante)")
-        # Agora o filtro usa o nome 'Tempo até Agendar'
         df_critico = df_filtrado[(df_filtrado['Status'] == '🔴 Atrasado') | (df_filtrado['Tempo até Agendar'] > 10)].copy()
         
+        # Preparando a visualização em tela e os dados do PDF
         if df_critico.empty:
             st.success("Nenhuma carga crítica no momento! Operação dentro do prazo esperado.")
+            df_print = pd.DataFrame()
         else:
-            # NOME NOVO INSERIDO NO RELATÓRIO DE IMPRESSÃO
             colunas_impressao = ['Nº Nota', 'U.F', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Tempo até Agendar', 'Status']
             colunas_imp_reais = [c for c in colunas_impressao if c in df_critico.columns]
             
             df_print = df_critico[colunas_imp_reais].copy()
             
-            # Limpeza visual para a impressão
+            # Limpeza visual das datas e textos
             if 'Faturamento' in df_print.columns:
                 df_print['Faturamento'] = df_print['Faturamento'].dt.strftime('%d/%m/%Y')
-                
             if 'Data Agendamento' in df_print.columns:
                 df_print['Data Agendamento'] = df_print['Data Agendamento'].dt.strftime('%d/%m/%Y').fillna('-')
-                
             if 'Tempo até Agendar' in df_print.columns:
                 df_print['Tempo até Agendar'] = df_print['Tempo até Agendar'].fillna(0).astype(int).astype(str) + " dias"
             
-            st.table(df_print.head(20))
-            st.info("💡 Dica para o Gerente: Para imprimir ou salvar em PDF, aperte **Ctrl + P** no teclado.")
+            # Mostra na tela uma prévia
+            st.table(df_print.head(30))
+            
+        # O BOTÃO MÁGICO DO PDF
+        st.markdown("---")
+        st.subheader("📥 Exportar Relatório Oficial")
+        
+        # Gera o arquivo em memória
+        arquivo_pdf = gerar_arquivo_pdf(df_print, valor_total, total_notas)
+        
+        # Exibe o botão de Download
+        st.download_button(
+            label="📄 Clique aqui para Baixar o Arquivo em PDF",
+            data=arquivo_pdf,
+            file_name=f"Relatorio_Logistica_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
 
 else:
     st.info("ℹ️ O painel está vazio. Faça o upload das planilhas na barra lateral.")
