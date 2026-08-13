@@ -52,7 +52,7 @@ df_banco, current_sha = carregar_dados_github()
 # 🔐 CONTROLE DE ACESSO
 st.sidebar.markdown("### ⚙️ Admin - Torre de Controle")
 senha_input = st.sidebar.text_input("Senha para atualizar dados:", type="password")
-is_admin = (senha_input == "1234")
+is_admin = (senha_input == "160861")
 
 if is_admin:
     st.sidebar.success("🔓 Acesso Liberado")
@@ -64,7 +64,7 @@ if is_admin:
                 if not GITHUB_TOKEN:
                     st.error("❌ ERRO: O seu GITHUB_TOKEN não foi encontrado! Configure o arquivo secrets.toml ou no site do Streamlit.")
                 else:
-                    with st.spinner("Atualizando painel do gerente..."):
+                    with st.spinner("Atualizando painel..."):
                         try:
                             df_novo = pd.read_excel(uploaded_file, dtype=str) if uploaded_file.name.lower().endswith('.xlsx') else pd.read_csv(uploaded_file, sep=';', dtype=str)
                             
