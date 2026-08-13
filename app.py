@@ -6,7 +6,7 @@ import io
 from datetime import datetime
 
 # Configuração da página
-st.set_page_config(page_title="Dashboard de Entregas - Gerencial", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Dashboard de Entregas-Gerencial", layout="wide", page_icon="📊")
 
 st.markdown("""
     <style>
@@ -14,7 +14,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Dashboard Gerencial de Entregas")
+st.title("📊 Dashboard Entregas")
 
 # Configurações do Repositório via Secrets
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
