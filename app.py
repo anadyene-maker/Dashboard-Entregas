@@ -11,7 +11,6 @@ st.set_page_config(page_title="Dashboard de Entregas - Gerencial", layout="wide"
 st.markdown("""
     <style>
     .st-emotion-cache-1jicfl2 {padding-top: 1rem;}
-    /* Esconde menu do streamlit na hora da impressão */
     @media print {
         header {visibility: hidden;}
         .st-emotion-cache-1r6slb0 {visibility: hidden;}
@@ -57,12 +56,11 @@ df_banco, current_sha = carregar_dados_github()
 # 🔐 CONTROLE DE ACESSO
 st.sidebar.markdown("### ⚙️ Admin - Torre de Controle")
 senha_input = st.sidebar.text_input("Senha para atualizar dados:", type="password")
-is_admin = (senha_input == "160861")
+is_admin = (senha_input == "1234")
 
 if is_admin:
     st.sidebar.success("🔓 Acesso Liberado")
     with st.sidebar.expander("📥 Subir Planilhas Diárias", expanded=True):
-        # AGORA ACEITA VÁRIOS ARQUIVOS AO MESMO TEMPO
         uploaded_files = st.file_uploader("Arraste os relatórios do Sankhya", type=["xlsx", "csv"], accept_multiple_files=True)
         
         if uploaded_files:
@@ -77,9 +75,7 @@ if is_admin:
                                 df_temp = pd.read_excel(file, dtype=str) if file.name.lower().endswith('.xlsx') else pd.read_csv(file, sep=';', dtype=str)
                                 dfs.append(df_temp)
                             
-                            # Junta todas as planilhas numa só
                             df_novo = pd.concat(dfs, ignore_index=True)
-                            
                             resposta_github = salvar_dados_github(df_novo, current_sha)
                             
                             if resposta_github.status_code in [200, 201]:
@@ -96,31 +92,27 @@ elif senha_input != "":
 if df_banco is not None and not df_banco.empty:
     df = df_banco.copy()
     
-    # Tratamento de Valores
+    # Tratamento de Valores e Datas
     if 'Vlr. Nota' in df.columns:
         df['Vlr. Nota'] = pd.to_numeric(df['Vlr. Nota'].str.replace(',', '.'), errors='coerce').fillna(0)
     
-    # Tratamento de Datas
     if 'Faturamento' in df.columns:
         df['Faturamento'] = pd.to_datetime(df['Faturamento'], errors='coerce')
     
-    # CORREÇÃO AQUI: Nome exato da coluna do Excel
     if 'Data Agendamento' not in df.columns: 
         df['Data Agendamento'] = pd.NaT
     df['Data Agendamento'] = pd.to_datetime(df['Data Agendamento'], errors='coerce')
     
     hoje = pd.to_datetime(datetime.now().date())
     df['Dias Faturado'] = (hoje - df['Faturamento']).dt.days
-    
-    # Nova métrica: Distância do Agendamento (Dias entre Faturar e Agendar)
     df['Prazo Agendado'] = (df['Data Agendamento'] - df['Faturamento']).dt.days
 
-    # Status
+    # Novo Status: Ignora entrega e analisa apenas se está em trânsito ou atrasado
     def classificar_status(row):
-        entrega = str(row.get('Data Chegada Opl.', '')).strip() # Ajustei para a coluna de entrega se chamar assim, ou você pode mudar se for outra
-        if entrega not in ['', 'nan', 'None', 'NaT']: return '🟢 Entregue'
-        elif row.get('Dias Faturado', 0) > 5: return '🔴 Atrasado'
-        else: return '🟡 Em Trânsito'
+        if row.get('Dias Faturado', 0) > 5: 
+            return '🔴 Atrasado'
+        else: 
+            return '🟡 Em Trânsito'
             
     df['Status'] = df.apply(classificar_status, axis=1)
 
@@ -130,7 +122,7 @@ if df_banco is not None and not df_banco.empty:
     df['Logística Ent.'] = df['Logística Ent.'].fillna("Não Informado")
     df['U.F'] = df['U.F'].fillna("Não Informado")
 
-    # CRIANDO AS DUAS ABAS VISUAIS
+    # AS DUAS ABAS VISUAIS
     aba1, aba2 = st.tabs(["📊 Dashboard Interativo", "🖨️ Relatório para Impressão"])
 
     with aba1:
@@ -138,7 +130,7 @@ if df_banco is not None and not df_banco.empty:
         col1, col2, col3 = st.columns(3)
         with col1: uf_sel = st.multiselect("Filtrar por UF:", options=sorted(df['U.F'].unique()))
         with col2: transp_sel = st.multiselect("Filtrar por Transportadora:", options=sorted(df['Logística Ent.'].unique()))
-        with col3: status_sel = st.multiselect("Status da Entrega:", options=["🔴 Atrasado", "🟡 Em Trânsito", "🟢 Entregue"], default=["🔴 Atrasado", "🟡 Em Trânsito"])
+        with col3: status_sel = st.multiselect("Status da Entrega:", options=["🔴 Atrasado", "🟡 Em Trânsito"], default=["🔴 Atrasado", "🟡 Em Trânsito"])
 
         # Aplicando filtros
         df_filtrado = df.copy()
@@ -146,28 +138,22 @@ if df_banco is not None and not df_banco.empty:
         if transp_sel: df_filtrado = df_filtrado[df_filtrado['Logística Ent.'].isin(transp_sel)]
         if status_sel: df_filtrado = df_filtrado[df_filtrado['Status'].isin(status_sel)]
 
-        # KPIs Matemáticos
+        # KPIs Reajustados (Focados em Pendências)
         st.markdown("---")
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1, kpi2, kpi3 = st.columns(3)
         
         total_notas = len(df_filtrado)
-        notas_entregues = len(df_filtrado[df_filtrado['Status'] == '🟢 Entregue'])
         notas_atrasadas = len(df_filtrado[df_filtrado['Status'] == '🔴 Atrasado'])
-        valor_total = df_filtrado[df_filtrado['Status'] != '🟢 Entregue']['Vlr. Nota'].sum()
+        valor_total = df_filtrado['Vlr. Nota'].sum()
         
-        perc_entregue = (notas_entregues / total_notas * 100) if total_notas > 0 else 0
-        perc_pendente = 100 - perc_entregue
-
-        kpi1.metric("💰 Valor Pendente (Na Rua)", f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        kpi2.metric("📦 Notas Pendentes", f"{total_notas - notas_entregues} Notas")
-        kpi3.metric("🚨 Atrasadas", f"{notas_atrasadas} Notas")
-        kpi4.metric("📈 Status de Conclusão", f"{perc_entregue:.1f}% Entregue", f"-{perc_pendente:.1f}% Pendente", delta_color="inverse")
+        kpi1.metric("💰 Valor Total na Rua", f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        kpi2.metric("📦 Total de Notas Pendentes", f"{total_notas} Notas")
+        kpi3.metric("🚨 Cargas Críticas (Atrasadas)", f"{notas_atrasadas} Notas")
         
         st.markdown("---")
 
         st.subheader("📋 Painel Detalhado de Cargas")
         
-        # Tabela com as colunas novas
         colunas_visiveis = ['Status', 'Dias Faturado', 'Nº Nota', 'Cliente', 'U.F', 'Vlr. Nota', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Prazo Agendado']
         colunas_reais = [c for c in colunas_visiveis if c in df_filtrado.columns]
         
@@ -187,22 +173,21 @@ if df_banco is not None and not df_banco.empty:
         )
 
     with aba2:
-        # VISÃO DE IMPRESSÃO - RELATÓRIO LIMPO
         st.markdown("## 🖨️ Relatório Executivo de Pendências Logísticas")
         st.caption(f"Relatório gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}")
         
         st.markdown(f"""
         **Resumo Operacional:**
         * **Valor total de mercadoria em trânsito/atraso:** R$ {valor_total:,.2f}
-        * **Progresso da Operação:** {perc_entregue:.1f}% Entregue | {perc_pendente:.1f}% Falta Entregar
+        * **Total de notas aguardando finalização:** {total_notas}
         """)
         
-        # Filtra apenas os problemáticos (Agendamento muito distante ou Atrasados)
         st.markdown("### ⚠️ Cargas Críticas (Atrasadas ou com Agendamento Distante)")
+        # Considera crítico o que está atrasado ou tem agendamento para mais de 10 dias depois do faturamento
         df_critico = df_filtrado[(df_filtrado['Status'] == '🔴 Atrasado') | (df_filtrado['Prazo Agendado'] > 10)].copy()
         
         if df_critico.empty:
-            st.success("Nenhuma carga crítica no momento! Operação dentro do prazo.")
+            st.success("Nenhuma carga crítica no momento! Operação dentro do prazo esperado.")
         else:
             colunas_impressao = ['Nº Nota', 'U.F', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Prazo Agendado', 'Status']
             colunas_imp_reais = [c for c in colunas_impressao if c in df_critico.columns]
