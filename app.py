@@ -32,7 +32,7 @@ headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.
 def salvar_dados_github(df_salvar, sha=None):
     csv_string = df_salvar.to_csv(index=False, sep=';')
     content_b64 = base64.b64encode(csv_string.encode('utf-8')).decode('utf-8')
-    data = {"message": "Atualização do Dashboard (Múltiplas Planilhas)", "content": content_b64}
+    data = {"message": "Atualização do Dashboard", "content": content_b64}
     if sha: data["sha"] = sha
     return requests.put(URL, headers=headers, json=data)
 
@@ -105,23 +105,21 @@ if df_banco is not None and not df_banco.empty:
     
     hoje = pd.to_datetime(datetime.now().date())
     df['Dias Faturado'] = (hoje - df['Faturamento']).dt.days
-    df['Prazo Agendado'] = (df['Data Agendamento'] - df['Faturamento']).dt.days
+    
+    # MUDEI O NOME AQUI:
+    df['Tempo até Agendar'] = (df['Data Agendamento'] - df['Faturamento']).dt.days
 
     # NOVA REGRA DE STATUS INTELIGENTE
     def classificar_status(row):
         agendamento = row.get('Data Agendamento')
         dias_fat = row.get('Dias Faturado', 0)
 
-        if pd.notna(agendamento): # Se existe uma data agendada
-            if hoje > agendamento:
-                return '🔴 Atrasado' # Passou da data de agendamento
-            else:
-                return '🟡 Em Trânsito' # Está dentro do prazo do agendamento
-        else: # Se não tem agendamento nenhum
-            if dias_fat > 5: 
-                return '🔴 Atrasado' # Passou de 5 dias do faturamento e nem agendou
-            else: 
-                return '🟡 Em Trânsito' # Saiu recente
+        if pd.notna(agendamento): 
+            if hoje > agendamento: return '🔴 Atrasado' 
+            else: return '🟡 Em Trânsito'
+        else:
+            if dias_fat > 5: return '🔴 Atrasado'
+            else: return '🟡 Em Trânsito'
             
     df['Status'] = df.apply(classificar_status, axis=1)
 
@@ -141,13 +139,11 @@ if df_banco is not None and not df_banco.empty:
         with col2: transp_sel = st.multiselect("Filtrar por Transportadora:", options=sorted(df['Logística Ent.'].unique()))
         with col3: status_sel = st.multiselect("Status da Entrega:", options=["🔴 Atrasado", "🟡 Em Trânsito"], default=["🔴 Atrasado", "🟡 Em Trânsito"])
 
-        # Aplicando filtros
         df_filtrado = df.copy()
         if uf_sel: df_filtrado = df_filtrado[df_filtrado['U.F'].isin(uf_sel)]
         if transp_sel: df_filtrado = df_filtrado[df_filtrado['Logística Ent.'].isin(transp_sel)]
         if status_sel: df_filtrado = df_filtrado[df_filtrado['Status'].isin(status_sel)]
 
-        # KPIs Reajustados
         st.markdown("---")
         kpi1, kpi2, kpi3 = st.columns(3)
         
@@ -160,10 +156,10 @@ if df_banco is not None and not df_banco.empty:
         kpi3.metric("🚨 Cargas Críticas (Atrasadas)", f"{notas_atrasadas} Notas")
         
         st.markdown("---")
-
         st.subheader("📋 Painel Detalhado de Cargas")
         
-        colunas_visiveis = ['Status', 'Dias Faturado', 'Nº Nota', 'Cliente', 'U.F', 'Vlr. Nota', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Prazo Agendado']
+        # NOME NOVO INSERIDO NAS COLUNAS VISÍVEIS
+        colunas_visiveis = ['Status', 'Dias Faturado', 'Nº Nota', 'Cliente', 'U.F', 'Vlr. Nota', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Tempo até Agendar']
         colunas_reais = [c for c in colunas_visiveis if c in df_filtrado.columns]
         
         df_exibir = df_filtrado[colunas_reais].copy()
@@ -176,7 +172,7 @@ if df_banco is not None and not df_banco.empty:
                 "Dias Faturado": st.column_config.NumberColumn("Dias na Rua"),
                 "Faturamento": st.column_config.DateColumn("Dt. Faturamento", format="DD/MM/YYYY"),
                 "Data Agendamento": st.column_config.DateColumn("Dt. Agendada", format="DD/MM/YYYY"),
-                "Prazo Agendado": st.column_config.NumberColumn("Dias até Agendar", format="%d dias")
+                "Tempo até Agendar": st.column_config.NumberColumn("Tempo até Agendar", format="%d dias")
             },
             hide_index=True, use_container_width=True
         )
@@ -192,15 +188,29 @@ if df_banco is not None and not df_banco.empty:
         """)
         
         st.markdown("### ⚠️ Cargas Críticas (Atrasadas ou com Agendamento Distante)")
-        df_critico = df_filtrado[(df_filtrado['Status'] == '🔴 Atrasado') | (df_filtrado['Prazo Agendado'] > 10)].copy()
+        # Agora o filtro usa o nome 'Tempo até Agendar'
+        df_critico = df_filtrado[(df_filtrado['Status'] == '🔴 Atrasado') | (df_filtrado['Tempo até Agendar'] > 10)].copy()
         
         if df_critico.empty:
             st.success("Nenhuma carga crítica no momento! Operação dentro do prazo esperado.")
         else:
-            colunas_impressao = ['Nº Nota', 'U.F', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Prazo Agendado', 'Status']
+            # NOME NOVO INSERIDO NO RELATÓRIO DE IMPRESSÃO
+            colunas_impressao = ['Nº Nota', 'U.F', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Tempo até Agendar', 'Status']
             colunas_imp_reais = [c for c in colunas_impressao if c in df_critico.columns]
             
-            st.table(df_critico[colunas_imp_reais].head(20))
+            df_print = df_critico[colunas_imp_reais].copy()
+            
+            # Limpeza visual para a impressão
+            if 'Faturamento' in df_print.columns:
+                df_print['Faturamento'] = df_print['Faturamento'].dt.strftime('%d/%m/%Y')
+                
+            if 'Data Agendamento' in df_print.columns:
+                df_print['Data Agendamento'] = df_print['Data Agendamento'].dt.strftime('%d/%m/%Y').fillna('-')
+                
+            if 'Tempo até Agendar' in df_print.columns:
+                df_print['Tempo até Agendar'] = df_print['Tempo até Agendar'].fillna(0).astype(int).astype(str) + " dias"
+            
+            st.table(df_print.head(20))
             st.info("💡 Dica para o Gerente: Para imprimir ou salvar em PDF, aperte **Ctrl + P** no teclado.")
 
 else:
