@@ -107,12 +107,21 @@ if df_banco is not None and not df_banco.empty:
     df['Dias Faturado'] = (hoje - df['Faturamento']).dt.days
     df['Prazo Agendado'] = (df['Data Agendamento'] - df['Faturamento']).dt.days
 
-    # Novo Status: Ignora entrega e analisa apenas se está em trânsito ou atrasado
+    # NOVA REGRA DE STATUS INTELIGENTE
     def classificar_status(row):
-        if row.get('Dias Faturado', 0) > 5: 
-            return '🔴 Atrasado'
-        else: 
-            return '🟡 Em Trânsito'
+        agendamento = row.get('Data Agendamento')
+        dias_fat = row.get('Dias Faturado', 0)
+
+        if pd.notna(agendamento): # Se existe uma data agendada
+            if hoje > agendamento:
+                return '🔴 Atrasado' # Passou da data de agendamento
+            else:
+                return '🟡 Em Trânsito' # Está dentro do prazo do agendamento
+        else: # Se não tem agendamento nenhum
+            if dias_fat > 5: 
+                return '🔴 Atrasado' # Passou de 5 dias do faturamento e nem agendou
+            else: 
+                return '🟡 Em Trânsito' # Saiu recente
             
     df['Status'] = df.apply(classificar_status, axis=1)
 
@@ -138,7 +147,7 @@ if df_banco is not None and not df_banco.empty:
         if transp_sel: df_filtrado = df_filtrado[df_filtrado['Logística Ent.'].isin(transp_sel)]
         if status_sel: df_filtrado = df_filtrado[df_filtrado['Status'].isin(status_sel)]
 
-        # KPIs Reajustados (Focados em Pendências)
+        # KPIs Reajustados
         st.markdown("---")
         kpi1, kpi2, kpi3 = st.columns(3)
         
@@ -183,7 +192,6 @@ if df_banco is not None and not df_banco.empty:
         """)
         
         st.markdown("### ⚠️ Cargas Críticas (Atrasadas ou com Agendamento Distante)")
-        # Considera crítico o que está atrasado ou tem agendamento para mais de 10 dias depois do faturamento
         df_critico = df_filtrado[(df_filtrado['Status'] == '🔴 Atrasado') | (df_filtrado['Prazo Agendado'] > 10)].copy()
         
         if df_critico.empty:
