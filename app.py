@@ -57,7 +57,7 @@ df_banco, current_sha = carregar_dados_github()
 # 🔐 CONTROLE DE ACESSO
 st.sidebar.markdown("### ⚙️ Admin - Torre de Controle")
 senha_input = st.sidebar.text_input("Senha para atualizar dados:", type="password")
-is_admin = (senha_input == "1234")
+is_admin = (senha_input == "160861")
 
 if is_admin:
     st.sidebar.success("🔓 Acesso Liberado")
@@ -97,22 +97,27 @@ if df_banco is not None and not df_banco.empty:
     df = df_banco.copy()
     
     # Tratamento de Valores
-    df['Vlr. Nota'] = pd.to_numeric(df['Vlr. Nota'].str.replace(',', '.'), errors='coerce').fillna(0)
+    if 'Vlr. Nota' in df.columns:
+        df['Vlr. Nota'] = pd.to_numeric(df['Vlr. Nota'].str.replace(',', '.'), errors='coerce').fillna(0)
     
     # Tratamento de Datas
-    df['Faturamento'] = pd.to_datetime(df['Faturamento'], errors='coerce')
-    if 'Agendamento' not in df.columns: df['Agendamento'] = pd.NaT
-    df['Agendamento'] = pd.to_datetime(df['Agendamento'], errors='coerce')
+    if 'Faturamento' in df.columns:
+        df['Faturamento'] = pd.to_datetime(df['Faturamento'], errors='coerce')
+    
+    # CORREÇÃO AQUI: Nome exato da coluna do Excel
+    if 'Data Agendamento' not in df.columns: 
+        df['Data Agendamento'] = pd.NaT
+    df['Data Agendamento'] = pd.to_datetime(df['Data Agendamento'], errors='coerce')
     
     hoje = pd.to_datetime(datetime.now().date())
     df['Dias Faturado'] = (hoje - df['Faturamento']).dt.days
     
     # Nova métrica: Distância do Agendamento (Dias entre Faturar e Agendar)
-    df['Prazo Agendado'] = (df['Agendamento'] - df['Faturamento']).dt.days
+    df['Prazo Agendado'] = (df['Data Agendamento'] - df['Faturamento']).dt.days
 
     # Status
     def classificar_status(row):
-        entrega = str(row.get('Entrega', '')).strip()
+        entrega = str(row.get('Data Chegada Opl.', '')).strip() # Ajustei para a coluna de entrega se chamar assim, ou você pode mudar se for outra
         if entrega not in ['', 'nan', 'None', 'NaT']: return '🟢 Entregue'
         elif row.get('Dias Faturado', 0) > 5: return '🔴 Atrasado'
         else: return '🟡 Em Trânsito'
@@ -163,7 +168,7 @@ if df_banco is not None and not df_banco.empty:
         st.subheader("📋 Painel Detalhado de Cargas")
         
         # Tabela com as colunas novas
-        colunas_visiveis = ['Status', 'Dias Faturado', 'Nº Nota', 'Cliente', 'U.F', 'Vlr. Nota', 'Logística Ent.', 'Faturamento', 'Agendamento', 'Prazo Agendado']
+        colunas_visiveis = ['Status', 'Dias Faturado', 'Nº Nota', 'Cliente', 'U.F', 'Vlr. Nota', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Prazo Agendado']
         colunas_reais = [c for c in colunas_visiveis if c in df_filtrado.columns]
         
         df_exibir = df_filtrado[colunas_reais].copy()
@@ -175,8 +180,8 @@ if df_banco is not None and not df_banco.empty:
                 "Vlr. Nota": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
                 "Dias Faturado": st.column_config.NumberColumn("Dias na Rua"),
                 "Faturamento": st.column_config.DateColumn("Dt. Faturamento", format="DD/MM/YYYY"),
-                "Agendamento": st.column_config.DateColumn("Dt. Agendada", format="DD/MM/YYYY"),
-                "Prazo Agendado": st.column_config.NumberColumn("Dias até Agendar (Gargalo)", format="%d dias")
+                "Data Agendamento": st.column_config.DateColumn("Dt. Agendada", format="DD/MM/YYYY"),
+                "Prazo Agendado": st.column_config.NumberColumn("Dias até Agendar", format="%d dias")
             },
             hide_index=True, use_container_width=True
         )
@@ -199,10 +204,10 @@ if df_banco is not None and not df_banco.empty:
         if df_critico.empty:
             st.success("Nenhuma carga crítica no momento! Operação dentro do prazo.")
         else:
-            colunas_impressao = ['Nº Nota', 'U.F', 'Logística Ent.', 'Faturamento', 'Agendamento', 'Prazo Agendado', 'Status']
+            colunas_impressao = ['Nº Nota', 'U.F', 'Logística Ent.', 'Faturamento', 'Data Agendamento', 'Prazo Agendado', 'Status']
             colunas_imp_reais = [c for c in colunas_impressao if c in df_critico.columns]
             
-            st.table(df_critico[colunas_imp_reais].head(20)) # Mostra as 20 mais críticas na tabela estática (ótima para PDF)
+            st.table(df_critico[colunas_imp_reais].head(20))
             st.info("💡 Dica para o Gerente: Para imprimir ou salvar em PDF, aperte **Ctrl + P** no teclado.")
 
 else:
